@@ -79,6 +79,7 @@ class MinecraftSyncApp:
         self.loading_status = ctk.CTkLabel(self.loading_screen, text="Initializing...")
         self.loading_status.pack(pady=5)
         
+        self.thread_running = False  # Track thread activity
         # Start loading in background
         threading.Thread(target=self.initialize_app, daemon=True).start()
         
@@ -262,7 +263,13 @@ class MinecraftSyncApp:
             percent = i / total
             self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
 
-        self.master.after(0, lambda: [self.sync_mods(), self.finish_progress("Finished Downloading")])
+        self.master.after(0, lambda: [
+            self.sync_mods(),
+            self.finish_progress("Finished Downloading"),
+            self.enable_all_buttons(),
+            setattr(self, "thread_running", False)
+        ])
+
 
     def threaded_download_latest(self):
         total = len(self.latest_mods)
@@ -288,10 +295,25 @@ class MinecraftSyncApp:
         self.progress_label.configure(text=msg)
 
     def download_all(self):
+        if self.thread_running:
+            return
+        self.thread_running = True
+        self.disable_all_buttons()
         threading.Thread(target=self.threaded_download_all, daemon=True).start()
 
     def download_latest(self):
+        if self.thread_running:
+            return
+        self.thread_running = True
+        self.disable_all_buttons()
         threading.Thread(target=self.threaded_download_latest, daemon=True).start()
+
+    def download_selected(self):
+        if self.thread_running:
+            return
+        self.thread_running = True
+        self.disable_all_buttons()
+        threading.Thread(target=self.threaded_download_selected, daemon=True).start()
 
     def delete_all(self):
         try:
@@ -406,8 +428,15 @@ class MinecraftSyncApp:
 
         self.master.after(0, lambda: [self.sync_mods(), self.finish_progress("Finished Downloading")])
 
-    def download_selected(self):
-        threading.Thread(target=self.threaded_download_selected, daemon=True).start()
+    def disable_all_buttons(self):
+        for widget in self.btn_frame.winfo_children():
+            if isinstance(widget, ctk.CTkButton):
+                widget.configure(state="disabled")
+
+    def enable_all_buttons(self):
+        for widget in self.btn_frame.winfo_children():
+            if isinstance(widget, ctk.CTkButton):
+                widget.configure(state="normal")
 
 # === LOGIN WINDOW ===
 class LoginWindow:
