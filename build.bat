@@ -1,0 +1,1 @@
+pyinstaller --onefile --noconsole mod_sync.py
