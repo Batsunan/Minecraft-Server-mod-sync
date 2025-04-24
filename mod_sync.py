@@ -22,6 +22,10 @@ LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)  # Create logs directory if it doesn't exist
 LOG_PATH = LOG_DIR / "Latest.txt"
 
+APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'MineSync')
+os.makedirs(APPDATA_DIR, exist_ok=True)
+REMEMBER_FILE = os.path.join(APPDATA_DIR, 'remember_me.json')
+
 # === DEBUG LOGGING ===
 def get_log_filename():
     """Generate a timestamped log filename"""
@@ -192,6 +196,10 @@ class MinecraftSyncApp:
         SFTP_USERNAME = None
         SFTP_PASSWORD = None
         
+        # Remove saved credentials
+        if os.path.exists(REMEMBER_FILE):
+            os.remove(REMEMBER_FILE)
+
         # Close current window
         self.master.destroy()
         
@@ -406,7 +414,7 @@ class LoginWindow:
     def __init__(self, master):
         self.master = master
         self.master.title("Mine Server Sync - Login")
-        self.master.geometry("400x350")  # Increased height for additional fields
+        self.master.geometry("400x375")  # Increased height for additional fields
         
         # Center the window
         window_width = self.master.winfo_reqwidth()
@@ -416,6 +424,7 @@ class LoginWindow:
         self.master.geometry(f"+{position_right}+{position_down}")
         
         self.setup_login_ui()
+        self.load_remembered()
         
     def setup_login_ui(self):
         frame = ctk.CTkFrame(self.master)
@@ -427,12 +436,14 @@ class LoginWindow:
         # Host entry
         self.host_entry = ctk.CTkEntry(frame, placeholder_text="SFTP Host")
         self.host_entry.pack(pady=6, padx=10)
-        self.host_entry.insert(0, 'sg03.wisehosting.com')  # Default value
+        if os.path.exists(REMEMBER_FILE): True
+        else: self.host_entry.insert(0, 'sg03.wisehosting.com')  # Default value
         
         # Port entry
         self.port_entry = ctk.CTkEntry(frame, placeholder_text="SFTP Port")
         self.port_entry.pack(pady=6, padx=10)
-        self.port_entry.insert(0, "2022")  # Default value
+        if os.path.exists(REMEMBER_FILE): True
+        else: self.port_entry.insert(0, "2022")  # Default value
         
         # Username entry
         self.user_entry = ctk.CTkEntry(frame, placeholder_text="Username")
@@ -442,6 +453,11 @@ class LoginWindow:
         self.pass_entry = ctk.CTkEntry(frame, placeholder_text="Password", show="*")
         self.pass_entry.pack(pady=6, padx=10)
         
+        # Remember Me
+        self.remember_var = ctk.BooleanVar()
+        self.remember_checkbox = ctk.CTkCheckBox(frame, text="Remember Me", variable=self.remember_var)
+        self.remember_checkbox.pack(pady=6)
+
         # Login button
         login_btn = ctk.CTkButton(frame, text="Connect", command=self.on_login)
         login_btn.pack(pady=12, padx=10)
@@ -510,6 +526,18 @@ class LoginWindow:
         
         # Test connection in a separate thread to keep UI responsive
         threading.Thread(target=self.test_connection, daemon=True).start()
+
+    def load_remembered(self):
+        if os.path.exists(REMEMBER_FILE):
+            with open(REMEMBER_FILE, "r") as f:
+                data = json.load(f)
+                self.host_entry.insert(0, data.get("host", ""))
+                self.port_entry.insert(0, str(data.get("port", "")))
+                self.user_entry.insert(0, data.get("user", ""))
+                decoded_pass = base64.b64decode(data.get("pass", "")).decode()
+                self.pass_entry.insert(0, decoded_pass)
+                self.remember_var.set(True)
+
         
     def test_connection(self):
         try:
@@ -525,6 +553,19 @@ class LoginWindow:
         for widget in self.master.winfo_children():
             if isinstance(widget, ctk.CTkButton) and widget.cget("text") == "Connect":
                 widget.configure(state="normal")
+
+        if self.remember_var.get():
+            data = {
+                "host": SFTP_HOST,
+                "port": SFTP_PORT,
+                "user": SFTP_USERNAME,
+                "pass": base64.b64encode(SFTP_PASSWORD.encode()).decode()
+            }
+            with open(REMEMBER_FILE, "w") as f:
+                json.dump(data, f)
+        else:
+            if os.path.exists(REMEMBER_FILE):
+                os.remove(REMEMBER_FILE)
         
         # Proceed to main app
         self.master.destroy()
@@ -541,11 +582,33 @@ class LoginWindow:
         
         self.error_label.configure(text=f"Connection failed: {error}")
 
+def try_auto_login():
+    if os.path.exists(REMEMBER_FILE):
+        try:
+            with open(REMEMBER_FILE, "r") as f:
+                data = json.load(f)
+            global SFTP_HOST, SFTP_PORT, SFTP_USERNAME, SFTP_PASSWORD
+            SFTP_HOST = data.get("host")
+            SFTP_PORT = int(data.get("port"))
+            SFTP_USERNAME = data.get("user")
+            SFTP_PASSWORD = base64.b64decode(data.get("pass")).decode()
+            
+            with get_sftp() as sftp:  # Test connection
+                return True
+        except Exception as e:
+            print(f"[AutoLogin Error] {e}")
+    return False
+
 # === MAIN ===
 if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("dark-blue")
     
-    login_root = ctk.CTk()
-    login_app = LoginWindow(login_root)
-    login_root.mainloop()
+    if try_auto_login():
+        root = ctk.CTk()
+        app = MinecraftSyncApp(root)
+        root.mainloop()
+    else:
+        login_root = ctk.CTk()
+        login_app = LoginWindow(login_root)
+        login_root.mainloop()
