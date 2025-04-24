@@ -1,17 +1,16 @@
 import os
+import time
 import datetime
+import base64
+import json
+import threading
 import traceback
 import paramiko
-import threading
 import customtkinter as ctk
 from PIL import Image
 from pathlib import Path
-import glob
-import time
-from PIL import ImageTk
 
 # === CONFIG ===
-
 SFTP_HOST = None  # Will be set by user
 SFTP_PORT = None  # Will be set by user
 SFTP_USERNAME = None  # Will be set by user
@@ -55,6 +54,7 @@ def get_sftp():
 class MinecraftSyncApp:
     def __init__(self, master):
         self.master = master
+
         # Show loading screen first
         self.loading_screen = ctk.CTkFrame(master)
         self.loading_screen.pack(fill='both', expand=True)
@@ -99,9 +99,9 @@ class MinecraftSyncApp:
         self.loading_status.configure(text=text)
         self.loading_progress.set(progress)
         self.sync_mods()
+
     def setup_gui(self):
         # Remove loading screen
-        
         self.loading_screen.pack_forget()
         self.loading_screen.destroy()
         
@@ -115,11 +115,7 @@ class MinecraftSyncApp:
         # Connection info label
         conn_info = ctk.CTkLabel(top_bar, text=f"Connected to: {SFTP_HOST}:{SFTP_PORT} \nBuild Version: 1.0.0",
                                  text_color="aqua", font=("Yippes", 12, "bold"))
-                                 
         conn_info.pack(side='left', padx=5)
-    
-
-    
         
         # Logout button
         logout_btn = ctk.CTkButton(top_bar, text="Logout", width=80, 
@@ -544,6 +540,7 @@ class LoginWindow:
                 widget.configure(state="normal")
         
         self.error_label.configure(text=f"Connection failed: {error}")
+
 # === MAIN ===
 if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
