@@ -23,7 +23,7 @@ jobs:
           python -m PyInstaller mod_sync.spec
       - uses: actions/upload-artifact@v2
         with:
-          name: Windows_ModSync
+          name: Mod_Sync
           path: dist/mod_sync.exe
 
       - name: create release
