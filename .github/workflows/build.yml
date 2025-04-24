@@ -11,16 +11,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v1
       - name: Install Python
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
-          architecture: 'x64'
+          python-version: '3.13'
       - name: Install requirements
         run: |
           pip install -r requirements.txt
       - name: Run PyInstaller
         run: |
           python -m PyInstaller mod_sync.spec
+        shell: pwsh
+      - name: Verify build output
+        run: |
+          if (Test-Path "dist/mod_sync.exe") {
+            Write-Host "✅ Build success: EXE found."
+          } else {
+            Write-Error "❌ Build failed: mod_sync.exe not found!"
+            exit 1
+          }
+        shell: pwsh
       - uses: actions/upload-artifact@v2
         with:
           name: Mod_Sync
