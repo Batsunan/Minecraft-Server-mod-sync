@@ -20,24 +20,18 @@ LOCAL_MODS_PATH = os.path.join(os.getenv('APPDATA'), ".minecraft", "mods")
 ASSET_PATH = Path(__file__).parent / "assets"
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)  # Create logs directory if it doesn't exist
-LOG_PATH = LOG_DIR / "Latest.txt"
+LOG_FILE = LOG_DIR / f"session_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
 
-APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'MineSync')
+APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'ModSync')
 os.makedirs(APPDATA_DIR, exist_ok=True)
 REMEMBER_FILE = os.path.join(APPDATA_DIR, 'remember_me.json')
 
 # === DEBUG LOGGING ===
-def get_log_filename():
-    """Generate a timestamped log filename"""
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    return LOG_DIR / f"session_{timestamp}.txt"
-
 def debug(msg):
     timestamp = datetime.datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
     line = f"{timestamp} {msg}"
     print(line)
-    log_path = get_log_filename()
-    with open(log_path, "a") as f:
+    with open(LOG_FILE, "a") as f:
         f.write(line + "\n")
     manage_logs()
 
@@ -84,26 +78,28 @@ class MinecraftSyncApp:
         threading.Thread(target=self.initialize_app, daemon=True).start()
         
     def initialize_app(self):
-        # Simulate loading steps
-        steps = [
+        self.loading_steps = [
             ("Connecting to server...", 0.2),
             ("Loading mod list...", 0.4),
             ("Checking local files...", 0.6),
             ("Preparing interface...", 0.8),
             ("Ready!", 1.0)
         ]
-        
-        for text, progress in steps:
-            time.sleep(0.5)  # Simulate work being done
-            self.master.after(0, self.update_loading, text, progress)
-            
-        time.sleep(0.5)
-        self.master.after(0, self.setup_gui)
-        
+        self.current_step = 0
+        self.process_loading_step()
+
+    def process_loading_step(self):
+        if self.current_step < len(self.loading_steps):
+            text, progress = self.loading_steps[self.current_step]
+            self.update_loading(text, progress)
+            self.current_step += 1
+            self.master.after(500, self.process_loading_step)  # Wait 500ms before next step
+        else:
+            self.master.after(500, self.setup_gui)  # Final delay before showing GUI
+
     def update_loading(self, text, progress):
         self.loading_status.configure(text=text)
         self.loading_progress.set(progress)
-        self.sync_mods()
 
     def setup_gui(self):
         # Remove loading screen
@@ -113,12 +109,27 @@ class MinecraftSyncApp:
         self.master.title(f"Mine Server Sync - Connected to {SFTP_HOST}:{SFTP_PORT}")
         self.master.geometry("800x600")
         
+        self.build_static_gui()
+
+        # Initialize UI
+        self.master.after(100, self.add_useful_mod_buttons)
+        self.master.after(200, lambda: self.create_select_all_checkbox(self.tabs.tab("Comparison"), self.selected_mods, self.compare_table))
+        self.master.after(300, lambda: self.create_select_all_checkbox(self.tabs.tab("Latest Mods"), self.latest_selected, self.latest_list))
+        self.progress_label.configure(text="Syncing mods...")
+        self.master.after(400, self.sync_mods)
+        self.progress_label.configure(text="Populating exceed mods...")
+        self.master.after(600, self.populate_exceed)
+        self.progress_label.configure(text="Populating latest mods...")
+        self.master.after(800, self.populate_latest)
+        self.progress_label.configure(text="")
+
+    def build_static_gui(self):
         # === Top Bar with Connection Info and Logout Button ===
         top_bar = ctk.CTkFrame(self.master)
         top_bar.pack(fill='x', padx=10, pady=5)
         
         # Connection info label
-        conn_info = ctk.CTkLabel(top_bar, text=f"Connected to: {SFTP_HOST}:{SFTP_PORT} \nBuild Version: 1.0.0",
+        conn_info = ctk.CTkLabel(top_bar, text=f"Connected to: {SFTP_HOST}:{SFTP_PORT} \nBuild Version: 1.1.0",
                                  text_color="aqua", font=("Yippes", 12, "bold"))
         conn_info.pack(side='left', padx=5)
         
@@ -166,6 +177,9 @@ class MinecraftSyncApp:
         self.progress_label = ctk.CTkLabel(self.master, text="")
         self.progress_label.pack()
 
+        self.error_label = ctk.CTkLabel(self.master, text="", text_color="red")
+        self.error_label.pack(pady=2)
+
         # === Buttons ===
         self.btn_frame = ctk.CTkFrame(self.master)
         self.btn_frame.pack(fill='x', pady=5, padx=10)
@@ -181,13 +195,9 @@ class MinecraftSyncApp:
         ctk.CTkButton(self.btn_frame, text="Delete All", image=self.delete_all_icon, compound='left', 
                       command=self.delete_all).pack(side='left', padx=5)
 
-        # Initialize UI
-        self.add_useful_mod_buttons()
-        self.create_select_all_checkbox(self.tabs.tab("Comparison"), self.selected_mods, self.compare_table)
-        self.create_select_all_checkbox(self.tabs.tab("Latest Mods"), self.latest_selected, self.latest_list)
-        self.sync_mods()
-        self.populate_exceed()
-        self.populate_latest()
+    def show_error(self, message):
+        self.error_label.configure(text=message)
+        self.master.after(6000, lambda: self.error_label.configure(text=""))  # Auto-clear after 6 sec
 
     def logout(self):
         # Clear all connection details
@@ -217,6 +227,7 @@ class MinecraftSyncApp:
                 return sorted(files)
         except Exception as e:
             debug(f"[ERROR] list_remote_mods: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Something went wrong..."))
             return []
 
     def list_local_mods(self):
@@ -228,6 +239,7 @@ class MinecraftSyncApp:
             return sorted(files)
         except Exception as e:
             debug(f"[ERROR] list_local_mods: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Something went wrong..."))
             return []
 
     def get_remote_mod_timestamps(self):
@@ -238,6 +250,7 @@ class MinecraftSyncApp:
                 return sorted(mods, key=lambda x: x[1], reverse=True)
         except Exception as e:
             debug(f"[ERROR] get_remote_mod_timestamps: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Something went wrong..."))
             return []
 
     def download_mod(self, mod_name):
@@ -249,7 +262,9 @@ class MinecraftSyncApp:
                 debug(f"Downloaded: {mod_name}")
                 return True
         except Exception as e:
-            debug(f"[ERROR] download_mod {mod_name}: {traceback.format_exc()}")
+            error_msg = f"Failed to download {mod_name}"
+            debug(f"[ERROR] {error_msg}: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error(error_msg))
             return False
 
     def threaded_download_all(self):
@@ -324,6 +339,7 @@ class MinecraftSyncApp:
             self.sync_mods()
         except Exception as e:
             debug(f"[ERROR] delete_all: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Something went wrong..."))
 
     def add_useful_mod_buttons(self):
         label = ctk.CTkLabel(self.useful_mods_frame, text="Recommended Mod Categories:", font=("Arial", 16, "bold"))
