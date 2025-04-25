@@ -300,51 +300,7 @@ class MinecraftSyncApp:
             debug(f"[ERROR] {error_msg}: {traceback.format_exc()}")
             self.master.after(0, lambda: self.show_error(error_msg))
             return False
-
-    def threaded_download_all(self):
-        mods = self.list_remote_mods()
-        total = len(mods)
-        if total == 0:
-            return
-
-        self.master.after(0, lambda: self.show_loading_overlay("Downloading all mods..."))
-        for i, mod in enumerate(mods, start=1):
-            self.download_mod(mod)
-            percent = i / total
-            self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
-
-        self.master.after(0, lambda: [
-            self.hide_loading_overlay(),
-            self.sync_mods(),
-            self.finish_progress("Finished Downloading"),
-            self.enable_all_buttons(),
-            setattr(self, "thread_running", False)
-        ])
-
-
-    def threaded_download_latest(self):
-        total = len(self.latest_mods)
-        if total == 0:
-            return
-
-        for i, (mod, _) in enumerate(self.latest_mods, start=1):
-            self.download_mod(mod)
-            percent = i / total
-            self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
-
-        self.master.after(0, lambda: [self.sync_mods(), self.finish_progress("Finished Downloading")])
-
-    def update_progress(self, percent, current, total):
-        self.progress_bar.set(percent)
-        self.progress_bar.configure(progress_color="#1f6aa5")
-        self.progress_label.configure(text=f"{current}/{total} Files downloaded")
-        self.master.update_idletasks()
-
-    def finish_progress(self, msg):
-        self.progress_bar.set(1)
-        self.progress_bar.configure(progress_color="green")
-        self.progress_label.configure(text=msg)
-
+        
     def download_all(self):
         if self.thread_running:
             return
@@ -365,6 +321,80 @@ class MinecraftSyncApp:
         self.thread_running = True
         self.disable_all_buttons()
         threading.Thread(target=self.threaded_download_selected, daemon=True).start()
+
+    def threaded_download_all(self):
+        try:
+            mods = self.list_remote_mods()
+            total = len(mods)
+            if total == 0:
+                return
+
+            self.master.after(0, lambda: self.show_loading_overlay("Downloading all mods..."))
+            for i, mod in enumerate(mods, start=1):
+                self.download_mod(mod)
+                percent = i / total
+                self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
+
+            self.master.after(0, lambda: self.finish_progress("Finished Downloading"))
+        except Exception as e:
+            debug(f"[ERROR] threaded_download_all: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("An error occurred during full download"))
+        finally:
+            self.master.after(0, lambda: [
+                self.hide_loading_overlay(),
+                self.enable_all_buttons()
+            ])
+            self.thread_running = False
+
+
+    def threaded_download_latest(self):
+        try:
+            total = len(self.latest_mods)
+            if total == 0:
+                return
+
+            for i, (mod, _) in enumerate(self.latest_mods, start=1):
+                self.download_mod(mod)
+                percent = i / total
+                self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
+
+            self.master.after(0, lambda: self.finish_progress("Finished Downloading"))
+        except Exception as e:
+            debug(f"[ERROR] threaded_download_latest: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Error downloading latest mods"))
+        finally:
+            self.master.after(0, self.enable_all_buttons)
+            self.thread_running = False
+
+    def threaded_download_selected(self):
+        try:
+            total = len(self.selected_mods)
+            if total == 0:
+                return
+
+            for i, mod in enumerate(self.selected_mods, start=1):
+                self.download_mod(mod)
+                percent = i / total
+                self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
+
+            self.master.after(0, lambda: self.finish_progress("Finished Downloading"))
+        except Exception as e:
+            debug(f"[ERROR] threaded_download_selected: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Error downloading selected mods"))
+        finally:
+            self.master.after(0, self.enable_all_buttons)
+            self.thread_running = False
+
+    def update_progress(self, percent, current, total):
+        self.progress_bar.set(percent)
+        self.progress_bar.configure(progress_color="#1f6aa5")
+        self.progress_label.configure(text=f"{current}/{total} Files downloaded")
+        self.master.update_idletasks()
+
+    def finish_progress(self, msg):
+        self.progress_bar.set(1)
+        self.progress_bar.configure(progress_color="green")
+        self.progress_label.configure(text=msg)
 
     def delete_all(self):
         try:
@@ -479,18 +509,6 @@ class MinecraftSyncApp:
 
             for widget in [frame, label, date_label]:
                 widget.bind("<Button-1>", lambda e, m=mod, f=frame: self.on_row_click(m, f, self.latest_selected))
-
-    def threaded_download_selected(self):
-        total = len(self.selected_mods)
-        if total == 0:
-            return
-
-        for i, mod in enumerate(self.selected_mods, start=1):
-            self.download_mod(mod)
-            percent = i / total
-            self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
-
-        self.master.after(0, lambda: [self.sync_mods(), self.finish_progress("Finished Downloading")])
 
     def disable_all_buttons(self):
         for widget in self.btn_frame.winfo_children():
@@ -638,6 +656,7 @@ class LoginWindow:
                 # Connection successful
                 self.master.after(0, self.on_connection_success)
         except Exception as e:
+            debug(f"[ERROR] test_connection: {traceback.format_exc()}")
             self.master.after(0, self.on_connection_failed, str(e))
             
     def on_connection_success(self):
