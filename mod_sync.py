@@ -22,9 +22,9 @@ APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'MineSync')
 os.makedirs(APPDATA_DIR, exist_ok=True)
 REMEMBER_FILE = os.path.join(APPDATA_DIR, 'remember_me.json')
 
-LOG_DIR = os.path.join(APPDATA_DIR, "logs")
+LOG_DIR = Path(os.path.join(APPDATA_DIR, "logs"))
 os.makedirs(LOG_DIR, exist_ok=True)  # Create logs directory if it doesn't exist
-LOG_FILE = Path(LOG_DIR) / f"session_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+LOG_FILE = LOG_DIR / f"session_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
 
 REMOTE_MODS_PATH = '/mods'
 LOCAL_MODS_PATH = os.path.join(os.getenv('APPDATA'), ".minecraft", "mods")
