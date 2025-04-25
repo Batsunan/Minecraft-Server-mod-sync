@@ -53,6 +53,10 @@ class MinecraftSyncApp:
     def __init__(self, master):
         self.master = master
 
+        self.master.title("Loading...")
+        icon_path = ASSET_PATH / "app_icon.ico"
+        self.master.iconbitmap(default=str(icon_path))
+
         # Show loading screen first
         self.loading_screen = ctk.CTkFrame(master)
         self.loading_screen.pack(fill='both', expand=True)

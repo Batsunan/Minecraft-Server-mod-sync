@@ -1,1 +1,1 @@
-pyinstaller --onefile --noconsole mod_sync.py
+pyinstaller --onefile --noconsole --add-data "assets;assets" -i assets/app_icon.ico mod_sync.py
