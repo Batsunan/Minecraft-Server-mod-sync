@@ -15,16 +15,20 @@ SFTP_HOST = None  # Will be set by user
 SFTP_PORT = None  # Will be set by user
 SFTP_USERNAME = None  # Will be set by user
 SFTP_PASSWORD = None  # Will be set by user
-REMOTE_MODS_PATH = '/mods'
-LOCAL_MODS_PATH = os.path.join(os.getenv('APPDATA'), ".minecraft", "mods")
-ASSET_PATH = Path(__file__).parent / "assets"
-LOG_DIR = Path("logs")
-LOG_DIR.mkdir(exist_ok=True)  # Create logs directory if it doesn't exist
-LOG_FILE = LOG_DIR / f"session_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+
+VERSION="v1.1.1"
 
 APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'MineSync')
 os.makedirs(APPDATA_DIR, exist_ok=True)
 REMEMBER_FILE = os.path.join(APPDATA_DIR, 'remember_me.json')
+
+LOG_DIR = os.path.join(APPDATA_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)  # Create logs directory if it doesn't exist
+LOG_FILE = Path(LOG_DIR) / f"session_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+
+REMOTE_MODS_PATH = '/mods'
+LOCAL_MODS_PATH = os.path.join(os.getenv('APPDATA'), ".minecraft", "mods")
+ASSET_PATH = Path(__file__).parent / "assets"
 
 # === DEBUG LOGGING ===
 def debug(msg):
@@ -128,7 +132,7 @@ class MinecraftSyncApp:
         top_bar.pack(fill='x', padx=10, pady=5)
         
         # Connection info label
-        conn_info = ctk.CTkLabel(top_bar, text=f"Connected to: {SFTP_HOST}:{SFTP_PORT} \nBuild Version: 1.1.1",
+        conn_info = ctk.CTkLabel(top_bar, text=f"Connected to: {SFTP_HOST}:{SFTP_PORT} \nBuild Version: {VERSION}",
                                  text_color="aqua", font=("Yippes", 12, "bold"))
         conn_info.pack(side='left', padx=5)
         
