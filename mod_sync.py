@@ -22,7 +22,7 @@ LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)  # Create logs directory if it doesn't exist
 LOG_FILE = LOG_DIR / f"session_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
 
-APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'ModSync')
+APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'MineSync')
 os.makedirs(APPDATA_DIR, exist_ok=True)
 REMEMBER_FILE = os.path.join(APPDATA_DIR, 'remember_me.json')
 
@@ -128,7 +128,7 @@ class MinecraftSyncApp:
         top_bar.pack(fill='x', padx=10, pady=5)
         
         # Connection info label
-        conn_info = ctk.CTkLabel(top_bar, text=f"Connected to: {SFTP_HOST}:{SFTP_PORT} \nBuild Version: 1.1.0",
+        conn_info = ctk.CTkLabel(top_bar, text=f"Connected to: {SFTP_HOST}:{SFTP_PORT} \nBuild Version: 1.1.1",
                                  text_color="aqua", font=("Yippes", 12, "bold"))
         conn_info.pack(side='left', padx=5)
         
