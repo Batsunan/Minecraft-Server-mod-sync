@@ -195,19 +195,39 @@ class MinecraftSyncApp:
                       command=self.delete_all).pack(side='left', padx=5)
 
     def load_mods_background(self):
-        # Optionally show loading state
+        self.disable_all_buttons()
+        self.show_loading_overlay("Loading mods...")
         self.master.after(0, lambda: self.progress_label.configure(text="Loading mods..."))
-        
+
         remote_mods = self.list_remote_mods()
         local_mods = self.list_local_mods()
         timestamps = self.get_remote_mod_timestamps()
-        
+
         self.master.after(0, lambda: self.sync_mods(remote_mods, local_mods))
         self.master.after(100, lambda: self.progress_label.configure(text="Populating exceed mods..."))
         self.master.after(100, lambda: self.populate_exceed(remote_mods, local_mods))
+
         self.master.after(200, lambda: self.progress_label.configure(text="Populating latest mods..."))
         self.master.after(200, lambda: self.populate_latest(timestamps))
-        self.master.after(400, lambda: self.progress_label.configure(text=""))
+
+        # Final cleanup
+        self.master.after(400, lambda: [
+            self.progress_label.configure(text=""),
+            self.hide_loading_overlay(),
+            self.enable_all_buttons()
+        ])
+
+    def show_loading_overlay(self, message="Loading..."):
+        self.loading_overlay = ctk.CTkFrame(self.master, fg_color="transparent")
+        self.loading_overlay.place(relx=0.5, rely=0.5, anchor="center")
+
+        self.loading_label = ctk.CTkLabel(self.loading_overlay, text=message, font=("Arial", 18, "bold"))
+        self.loading_label.pack(padx=20, pady=20)
+
+    def hide_loading_overlay(self):
+        if hasattr(self, 'loading_overlay'):
+            self.loading_overlay.destroy()
+            del self.loading_overlay
 
     def show_error(self, message):
         self.error_label.configure(text=message)
@@ -287,12 +307,14 @@ class MinecraftSyncApp:
         if total == 0:
             return
 
+        self.master.after(0, lambda: self.show_loading_overlay("Downloading all mods..."))
         for i, mod in enumerate(mods, start=1):
             self.download_mod(mod)
             percent = i / total
             self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
 
         self.master.after(0, lambda: [
+            self.hide_loading_overlay(),
             self.sync_mods(),
             self.finish_progress("Finished Downloading"),
             self.enable_all_buttons(),
@@ -393,24 +415,35 @@ class MinecraftSyncApp:
             widget.destroy()
         self.selected_mods.clear()
 
-        remote_mods = remote_mods or self.list_remote_mods()
-        local_mods = local_mods or self.list_local_mods()
+        self.remote_mods_to_show = remote_mods or self.list_remote_mods()
+        self.local_mods_set = set(local_mods or self.list_local_mods())
+        self._mod_index = 0
+        self.show_next_mod()
 
-        for mod in remote_mods:
-            frame = ctk.CTkFrame(self.compare_table)
-            frame.pack(fill='x', pady=1, padx=5)
-            frame.mod_name = mod
-            exists = mod in local_mods
-            icon = self.check_icon if exists else self.cross_icon
+    def show_next_mod(self):
+        if self._mod_index >= len(self.remote_mods_to_show):
+            self.hide_loading_overlay()
+            return
 
-            name_label = ctk.CTkLabel(frame, text=mod)
-            name_label.pack(side='left', padx=10)
+        mod = self.remote_mods_to_show[self._mod_index]
+        exists = mod in self.local_mods_set
+        icon = self.check_icon if exists else self.cross_icon
 
-            icon_label = ctk.CTkLabel(frame, image=icon, text='')
-            icon_label.pack(side='right', padx=10)
+        frame = ctk.CTkFrame(self.compare_table)
+        frame.pack(fill='x', pady=1, padx=5)
+        frame.mod_name = mod
 
-            for widget in [frame, name_label, icon_label]:
-                widget.bind("<Button-1>", lambda e, m=mod, f=frame: self.on_row_click(m, f, self.selected_mods))
+        name_label = ctk.CTkLabel(frame, text=mod)
+        name_label.pack(side='left', padx=10)
+
+        icon_label = ctk.CTkLabel(frame, image=icon, text='')
+        icon_label.pack(side='right', padx=10)
+
+        for widget in [frame, name_label, icon_label]:
+            widget.bind("<Button-1>", lambda e, m=mod, f=frame: self.on_row_click(m, f, self.selected_mods))
+
+        self._mod_index += 1
+        self.master.after(20, self.show_next_mod)  # 20ms delay per row
 
     def populate_exceed(self, remote=None, local=None):
         remote = set(remote or self.list_remote_mods())
@@ -496,14 +529,14 @@ class LoginWindow:
         # Host entry
         self.host_entry = ctk.CTkEntry(frame, placeholder_text="SFTP Host")
         self.host_entry.pack(pady=6, padx=10)
-        if os.path.exists(REMEMBER_FILE): True
-        else: self.host_entry.insert(0, 'sg03.wisehosting.com')  # Default value
+        if not os.path.exists(REMEMBER_FILE):
+            self.host_entry.insert(0, 'sg03.wisehosting.com')  # Default value
         
         # Port entry
         self.port_entry = ctk.CTkEntry(frame, placeholder_text="SFTP Port")
         self.port_entry.pack(pady=6, padx=10)
-        if os.path.exists(REMEMBER_FILE): True
-        else: self.port_entry.insert(0, "2022")  # Default value
+        if not os.path.exists(REMEMBER_FILE):
+            self.port_entry.insert(0, "2022")  # Default value
         
         # Username entry
         self.user_entry = ctk.CTkEntry(frame, placeholder_text="Username")
