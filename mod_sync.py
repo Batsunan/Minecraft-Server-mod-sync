@@ -119,13 +119,8 @@ class MinecraftSyncApp:
         self.master.after(100, self.add_useful_mod_buttons)
         self.master.after(200, lambda: self.create_select_all_checkbox(self.tabs.tab("Comparison"), self.selected_mods, self.compare_table))
         self.master.after(300, lambda: self.create_select_all_checkbox(self.tabs.tab("Latest Mods"), self.latest_selected, self.latest_list))
-        self.progress_label.configure(text="Syncing mods...")
-        self.master.after(400, self.sync_mods)
-        self.progress_label.configure(text="Populating exceed mods...")
-        self.master.after(600, self.populate_exceed)
-        self.progress_label.configure(text="Populating latest mods...")
-        self.master.after(800, self.populate_latest)
-        self.progress_label.configure(text="")
+
+        threading.Thread(target=self.load_mods_background, daemon=True).start()
 
     def build_static_gui(self):
         # === Top Bar with Connection Info and Logout Button ===
@@ -198,6 +193,21 @@ class MinecraftSyncApp:
                       command=self.download_all).pack(side='left', padx=5)
         ctk.CTkButton(self.btn_frame, text="Delete All", image=self.delete_all_icon, compound='left', 
                       command=self.delete_all).pack(side='left', padx=5)
+
+    def load_mods_background(self):
+        # Optionally show loading state
+        self.master.after(0, lambda: self.progress_label.configure(text="Loading mods..."))
+        
+        remote_mods = self.list_remote_mods()
+        local_mods = self.list_local_mods()
+        timestamps = self.get_remote_mod_timestamps()
+        
+        self.master.after(0, lambda: self.sync_mods(remote_mods, local_mods))
+        self.master.after(100, lambda: self.progress_label.configure(text="Populating exceed mods..."))
+        self.master.after(100, lambda: self.populate_exceed(remote_mods, local_mods))
+        self.master.after(200, lambda: self.progress_label.configure(text="Populating latest mods..."))
+        self.master.after(200, lambda: self.populate_latest(timestamps))
+        self.master.after(400, lambda: self.progress_label.configure(text=""))
 
     def show_error(self, message):
         self.error_label.configure(text=message)
@@ -378,13 +388,13 @@ class MinecraftSyncApp:
             target.append(mod)
             frame.configure(fg_color="#2a2a2a")
 
-    def sync_mods(self):
+    def sync_mods(self, remote_mods=None, local_mods=None):
         for widget in self.compare_table.winfo_children():
             widget.destroy()
         self.selected_mods.clear()
 
-        remote_mods = self.list_remote_mods()
-        local_mods = self.list_local_mods()
+        remote_mods = remote_mods or self.list_remote_mods()
+        local_mods = local_mods or self.list_local_mods()
 
         for mod in remote_mods:
             frame = ctk.CTkFrame(self.compare_table)
@@ -402,22 +412,23 @@ class MinecraftSyncApp:
             for widget in [frame, name_label, icon_label]:
                 widget.bind("<Button-1>", lambda e, m=mod, f=frame: self.on_row_click(m, f, self.selected_mods))
 
-    def populate_exceed(self):
+    def populate_exceed(self, remote=None, local=None):
+        remote = set(remote or self.list_remote_mods())
+        local = set(local or self.list_local_mods())
+
         for widget in self.exceed_list.winfo_children():
             widget.destroy()
-
-        remote = set(self.list_remote_mods())
-        local = set(self.list_local_mods())
+        
         only_client = sorted(local - remote)
         for mod in only_client:
             label = ctk.CTkLabel(self.exceed_list, text=mod)
             label.pack(anchor='w', padx=10, pady=2)
 
-    def populate_latest(self):
+    def populate_latest(self, timestamps=None):
+        self.latest_mods = (timestamps or self.get_remote_mod_timestamps())[:10]
+
         for widget in self.latest_list.winfo_children():
             widget.destroy()
-
-        self.latest_mods = self.get_remote_mod_timestamps()[:10]
         self.latest_selected.clear()
 
         for mod, ts in self.latest_mods:
