@@ -1,0 +1,1 @@
+pyinstaller --onefile --clean --noupx --noconsole --add-data "assets;assets" -i assets/app_icon.ico mod_sync.py

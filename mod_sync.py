@@ -1,40 +1,41 @@
 import os
+import time
 import datetime
+import base64
+import json
+import threading
 import traceback
 import paramiko
-import threading
 import customtkinter as ctk
 from PIL import Image
 from pathlib import Path
-import glob
-import time
-from PIL import ImageTk
 
 # === CONFIG ===
-
 SFTP_HOST = None  # Will be set by user
 SFTP_PORT = None  # Will be set by user
 SFTP_USERNAME = None  # Will be set by user
 SFTP_PASSWORD = None  # Will be set by user
+
+VERSION="v1.1.1"
+
+APPDATA_DIR = os.path.join(os.getenv('APPDATA'), 'MineSync')
+os.makedirs(APPDATA_DIR, exist_ok=True)
+REMEMBER_FILE = os.path.join(APPDATA_DIR, 'remember_me.json')
+
+LOG_DIR = Path(os.path.join(APPDATA_DIR, "logs"))
+os.makedirs(LOG_DIR, exist_ok=True)  # Create logs directory if it doesn't exist
+LOG_FILE = LOG_DIR / f"session_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+
 REMOTE_MODS_PATH = '/mods'
 LOCAL_MODS_PATH = os.path.join(os.getenv('APPDATA'), ".minecraft", "mods")
 ASSET_PATH = Path(__file__).parent / "assets"
-LOG_DIR = Path("logs")
-LOG_DIR.mkdir(exist_ok=True)  # Create logs directory if it doesn't exist
-LOG_PATH = LOG_DIR / "Latest.txt"
 
 # === DEBUG LOGGING ===
-def get_log_filename():
-    """Generate a timestamped log filename"""
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    return LOG_DIR / f"session_{timestamp}.txt"
-
 def debug(msg):
     timestamp = datetime.datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
     line = f"{timestamp} {msg}"
     print(line)
-    log_path = get_log_filename()
-    with open(log_path, "a") as f:
+    with open(LOG_FILE, "a") as f:
         f.write(line + "\n")
     manage_logs()
 
@@ -55,6 +56,11 @@ def get_sftp():
 class MinecraftSyncApp:
     def __init__(self, master):
         self.master = master
+
+        self.master.title("Loading...")
+        icon_path = ASSET_PATH / "app_icon.ico"
+        self.master.iconbitmap(default=str(icon_path))
+
         # Show loading screen first
         self.loading_screen = ctk.CTkFrame(master)
         self.loading_screen.pack(fill='both', expand=True)
@@ -75,51 +81,60 @@ class MinecraftSyncApp:
         self.loading_status = ctk.CTkLabel(self.loading_screen, text="Initializing...")
         self.loading_status.pack(pady=5)
         
+        self.thread_running = False  # Track thread activity
         # Start loading in background
         threading.Thread(target=self.initialize_app, daemon=True).start()
         
     def initialize_app(self):
-        # Simulate loading steps
-        steps = [
+        self.loading_steps = [
             ("Connecting to server...", 0.2),
             ("Loading mod list...", 0.4),
             ("Checking local files...", 0.6),
             ("Preparing interface...", 0.8),
             ("Ready!", 1.0)
         ]
-        
-        for text, progress in steps:
-            time.sleep(0.5)  # Simulate work being done
-            self.master.after(0, self.update_loading, text, progress)
-            
-        time.sleep(0.5)
-        self.master.after(0, self.setup_gui)
-        
+        self.current_step = 0
+        self.process_loading_step()
+
+    def process_loading_step(self):
+        if self.current_step < len(self.loading_steps):
+            text, progress = self.loading_steps[self.current_step]
+            self.update_loading(text, progress)
+            self.current_step += 1
+            self.master.after(500, self.process_loading_step)  # Wait 500ms before next step
+        else:
+            self.master.after(500, self.setup_gui)  # Final delay before showing GUI
+
     def update_loading(self, text, progress):
         self.loading_status.configure(text=text)
         self.loading_progress.set(progress)
-        self.sync_mods()
+
     def setup_gui(self):
         # Remove loading screen
-        
         self.loading_screen.pack_forget()
         self.loading_screen.destroy()
         
         self.master.title(f"Mine Server Sync - Connected to {SFTP_HOST}:{SFTP_PORT}")
         self.master.geometry("800x600")
         
+        self.build_static_gui()
+
+        # Initialize UI
+        self.master.after(100, self.add_useful_mod_buttons)
+        self.master.after(200, lambda: self.create_select_all_checkbox(self.tabs.tab("Comparison"), self.selected_mods, self.compare_table))
+        self.master.after(300, lambda: self.create_select_all_checkbox(self.tabs.tab("Latest Mods"), self.latest_selected, self.latest_list))
+
+        threading.Thread(target=self.load_mods_background, daemon=True).start()
+
+    def build_static_gui(self):
         # === Top Bar with Connection Info and Logout Button ===
         top_bar = ctk.CTkFrame(self.master)
         top_bar.pack(fill='x', padx=10, pady=5)
         
         # Connection info label
-        conn_info = ctk.CTkLabel(top_bar, text=f"Connected to: {SFTP_HOST}:{SFTP_PORT} \nBuild Version: 1.0.0",
+        conn_info = ctk.CTkLabel(top_bar, text=f"Connected to: {SFTP_HOST}:{SFTP_PORT} \nBuild Version: {VERSION}",
                                  text_color="aqua", font=("Yippes", 12, "bold"))
-                                 
         conn_info.pack(side='left', padx=5)
-    
-
-    
         
         # Logout button
         logout_btn = ctk.CTkButton(top_bar, text="Logout", width=80, 
@@ -165,6 +180,9 @@ class MinecraftSyncApp:
         self.progress_label = ctk.CTkLabel(self.master, text="")
         self.progress_label.pack()
 
+        self.error_label = ctk.CTkLabel(self.master, text="", text_color="red")
+        self.error_label.pack(pady=2)
+
         # === Buttons ===
         self.btn_frame = ctk.CTkFrame(self.master)
         self.btn_frame.pack(fill='x', pady=5, padx=10)
@@ -180,13 +198,44 @@ class MinecraftSyncApp:
         ctk.CTkButton(self.btn_frame, text="Delete All", image=self.delete_all_icon, compound='left', 
                       command=self.delete_all).pack(side='left', padx=5)
 
-        # Initialize UI
-        self.add_useful_mod_buttons()
-        self.create_select_all_checkbox(self.tabs.tab("Comparison"), self.selected_mods, self.compare_table)
-        self.create_select_all_checkbox(self.tabs.tab("Latest Mods"), self.latest_selected, self.latest_list)
-        self.sync_mods()
-        self.populate_exceed()
-        self.populate_latest()
+    def load_mods_background(self):
+        self.disable_all_buttons()
+        self.show_loading_overlay("Loading mods...")
+        self.master.after(0, lambda: self.progress_label.configure(text="Loading mods..."))
+
+        remote_mods = self.list_remote_mods()
+        local_mods = self.list_local_mods()
+        timestamps = self.get_remote_mod_timestamps()
+
+        self.master.after(0, lambda: self.sync_mods(remote_mods, local_mods))
+        self.master.after(100, lambda: self.progress_label.configure(text="Populating exceed mods..."))
+        self.master.after(100, lambda: self.populate_exceed(remote_mods, local_mods))
+
+        self.master.after(200, lambda: self.progress_label.configure(text="Populating latest mods..."))
+        self.master.after(200, lambda: self.populate_latest(timestamps))
+
+        # Final cleanup
+        self.master.after(400, lambda: [
+            self.progress_label.configure(text=""),
+            self.hide_loading_overlay(),
+            self.enable_all_buttons()
+        ])
+
+    def show_loading_overlay(self, message="Loading..."):
+        self.loading_overlay = ctk.CTkFrame(self.master, fg_color="transparent")
+        self.loading_overlay.place(relx=0.5, rely=0.5, anchor="center")
+
+        self.loading_label = ctk.CTkLabel(self.loading_overlay, text=message, font=("Arial", 18, "bold"))
+        self.loading_label.pack(padx=20, pady=20)
+
+    def hide_loading_overlay(self):
+        if hasattr(self, 'loading_overlay'):
+            self.loading_overlay.destroy()
+            del self.loading_overlay
+
+    def show_error(self, message):
+        self.error_label.configure(text=message)
+        self.master.after(6000, lambda: self.error_label.configure(text=""))  # Auto-clear after 6 sec
 
     def logout(self):
         # Clear all connection details
@@ -196,6 +245,10 @@ class MinecraftSyncApp:
         SFTP_USERNAME = None
         SFTP_PASSWORD = None
         
+        # Remove saved credentials
+        if os.path.exists(REMEMBER_FILE):
+            os.remove(REMEMBER_FILE)
+
         # Close current window
         self.master.destroy()
         
@@ -212,6 +265,7 @@ class MinecraftSyncApp:
                 return sorted(files)
         except Exception as e:
             debug(f"[ERROR] list_remote_mods: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Something went wrong..."))
             return []
 
     def list_local_mods(self):
@@ -223,6 +277,7 @@ class MinecraftSyncApp:
             return sorted(files)
         except Exception as e:
             debug(f"[ERROR] list_local_mods: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Something went wrong..."))
             return []
 
     def get_remote_mod_timestamps(self):
@@ -233,6 +288,7 @@ class MinecraftSyncApp:
                 return sorted(mods, key=lambda x: x[1], reverse=True)
         except Exception as e:
             debug(f"[ERROR] get_remote_mod_timestamps: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Something went wrong..."))
             return []
 
     def download_mod(self, mod_name):
@@ -244,33 +300,94 @@ class MinecraftSyncApp:
                 debug(f"Downloaded: {mod_name}")
                 return True
         except Exception as e:
-            debug(f"[ERROR] download_mod {mod_name}: {traceback.format_exc()}")
+            error_msg = f"Failed to download {mod_name}"
+            debug(f"[ERROR] {error_msg}: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error(error_msg))
             return False
+        
+    def download_all(self):
+        if self.thread_running:
+            return
+        self.thread_running = True
+        self.disable_all_buttons()
+        threading.Thread(target=self.threaded_download_all, daemon=True).start()
+
+    def download_latest(self):
+        if self.thread_running:
+            return
+        self.thread_running = True
+        self.disable_all_buttons()
+        threading.Thread(target=self.threaded_download_latest, daemon=True).start()
+
+    def download_selected(self):
+        if self.thread_running:
+            return
+        self.thread_running = True
+        self.disable_all_buttons()
+        threading.Thread(target=self.threaded_download_selected, daemon=True).start()
 
     def threaded_download_all(self):
-        mods = self.list_remote_mods()
-        total = len(mods)
-        if total == 0:
-            return
+        try:
+            mods = self.list_remote_mods()
+            total = len(mods)
+            if total == 0:
+                return
 
-        for i, mod in enumerate(mods, start=1):
-            self.download_mod(mod)
-            percent = i / total
-            self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
+            self.master.after(0, lambda: self.show_loading_overlay("Downloading all mods..."))
+            for i, mod in enumerate(mods, start=1):
+                self.download_mod(mod)
+                percent = i / total
+                self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
 
-        self.master.after(0, lambda: [self.sync_mods(), self.finish_progress("Finished Downloading")])
+            self.master.after(0, lambda: self.finish_progress("Finished Downloading"))
+        except Exception as e:
+            debug(f"[ERROR] threaded_download_all: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("An error occurred during full download"))
+        finally:
+            self.master.after(0, lambda: [
+                self.hide_loading_overlay(),
+                self.enable_all_buttons()
+            ])
+            self.thread_running = False
+
 
     def threaded_download_latest(self):
-        total = len(self.latest_mods)
-        if total == 0:
-            return
+        try:
+            total = len(self.latest_mods)
+            if total == 0:
+                return
 
-        for i, (mod, _) in enumerate(self.latest_mods, start=1):
-            self.download_mod(mod)
-            percent = i / total
-            self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
+            for i, (mod, _) in enumerate(self.latest_mods, start=1):
+                self.download_mod(mod)
+                percent = i / total
+                self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
 
-        self.master.after(0, lambda: [self.sync_mods(), self.finish_progress("Finished Downloading")])
+            self.master.after(0, lambda: self.finish_progress("Finished Downloading"))
+        except Exception as e:
+            debug(f"[ERROR] threaded_download_latest: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Error downloading latest mods"))
+        finally:
+            self.master.after(0, self.enable_all_buttons)
+            self.thread_running = False
+
+    def threaded_download_selected(self):
+        try:
+            total = len(self.selected_mods)
+            if total == 0:
+                return
+
+            for i, mod in enumerate(self.selected_mods, start=1):
+                self.download_mod(mod)
+                percent = i / total
+                self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
+
+            self.master.after(0, lambda: self.finish_progress("Finished Downloading"))
+        except Exception as e:
+            debug(f"[ERROR] threaded_download_selected: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Error downloading selected mods"))
+        finally:
+            self.master.after(0, self.enable_all_buttons)
+            self.thread_running = False
 
     def update_progress(self, percent, current, total):
         self.progress_bar.set(percent)
@@ -283,12 +400,6 @@ class MinecraftSyncApp:
         self.progress_bar.configure(progress_color="green")
         self.progress_label.configure(text=msg)
 
-    def download_all(self):
-        threading.Thread(target=self.threaded_download_all, daemon=True).start()
-
-    def download_latest(self):
-        threading.Thread(target=self.threaded_download_latest, daemon=True).start()
-
     def delete_all(self):
         try:
             for file in os.listdir(LOCAL_MODS_PATH):
@@ -298,6 +409,7 @@ class MinecraftSyncApp:
             self.sync_mods()
         except Exception as e:
             debug(f"[ERROR] delete_all: {traceback.format_exc()}")
+            self.master.after(0, lambda: self.show_error("Something went wrong..."))
 
     def add_useful_mod_buttons(self):
         label = ctk.CTkLabel(self.useful_mods_frame, text="Recommended Mod Categories:", font=("Arial", 16, "bold"))
@@ -332,46 +444,58 @@ class MinecraftSyncApp:
             target.append(mod)
             frame.configure(fg_color="#2a2a2a")
 
-    def sync_mods(self):
+    def sync_mods(self, remote_mods=None, local_mods=None):
         for widget in self.compare_table.winfo_children():
             widget.destroy()
         self.selected_mods.clear()
 
-        remote_mods = self.list_remote_mods()
-        local_mods = self.list_local_mods()
+        self.remote_mods_to_show = remote_mods or self.list_remote_mods()
+        self.local_mods_set = set(local_mods or self.list_local_mods())
+        self._mod_index = 0
+        self.show_next_mod()
 
-        for mod in remote_mods:
-            frame = ctk.CTkFrame(self.compare_table)
-            frame.pack(fill='x', pady=1, padx=5)
-            frame.mod_name = mod
-            exists = mod in local_mods
-            icon = self.check_icon if exists else self.cross_icon
+    def show_next_mod(self):
+        if self._mod_index >= len(self.remote_mods_to_show):
+            self.hide_loading_overlay()
+            return
 
-            name_label = ctk.CTkLabel(frame, text=mod)
-            name_label.pack(side='left', padx=10)
+        mod = self.remote_mods_to_show[self._mod_index]
+        exists = mod in self.local_mods_set
+        icon = self.check_icon if exists else self.cross_icon
 
-            icon_label = ctk.CTkLabel(frame, image=icon, text='')
-            icon_label.pack(side='right', padx=10)
+        frame = ctk.CTkFrame(self.compare_table)
+        frame.pack(fill='x', pady=1, padx=5)
+        frame.mod_name = mod
 
-            for widget in [frame, name_label, icon_label]:
-                widget.bind("<Button-1>", lambda e, m=mod, f=frame: self.on_row_click(m, f, self.selected_mods))
+        name_label = ctk.CTkLabel(frame, text=mod)
+        name_label.pack(side='left', padx=10)
 
-    def populate_exceed(self):
+        icon_label = ctk.CTkLabel(frame, image=icon, text='')
+        icon_label.pack(side='right', padx=10)
+
+        for widget in [frame, name_label, icon_label]:
+            widget.bind("<Button-1>", lambda e, m=mod, f=frame: self.on_row_click(m, f, self.selected_mods))
+
+        self._mod_index += 1
+        self.master.after(20, self.show_next_mod)  # 20ms delay per row
+
+    def populate_exceed(self, remote=None, local=None):
+        remote = set(remote or self.list_remote_mods())
+        local = set(local or self.list_local_mods())
+
         for widget in self.exceed_list.winfo_children():
             widget.destroy()
-
-        remote = set(self.list_remote_mods())
-        local = set(self.list_local_mods())
+        
         only_client = sorted(local - remote)
         for mod in only_client:
             label = ctk.CTkLabel(self.exceed_list, text=mod)
             label.pack(anchor='w', padx=10, pady=2)
 
-    def populate_latest(self):
+    def populate_latest(self, timestamps=None):
+        self.latest_mods = (timestamps or self.get_remote_mod_timestamps())[:10]
+
         for widget in self.latest_list.winfo_children():
             widget.destroy()
-
-        self.latest_mods = self.get_remote_mod_timestamps()[:10]
         self.latest_selected.clear()
 
         for mod, ts in self.latest_mods:
@@ -390,27 +514,22 @@ class MinecraftSyncApp:
             for widget in [frame, label, date_label]:
                 widget.bind("<Button-1>", lambda e, m=mod, f=frame: self.on_row_click(m, f, self.latest_selected))
 
-    def threaded_download_selected(self):
-        total = len(self.selected_mods)
-        if total == 0:
-            return
+    def disable_all_buttons(self):
+        for widget in self.btn_frame.winfo_children():
+            if isinstance(widget, ctk.CTkButton):
+                widget.configure(state="disabled")
 
-        for i, mod in enumerate(self.selected_mods, start=1):
-            self.download_mod(mod)
-            percent = i / total
-            self.master.after(0, lambda p=percent, i=i: self.update_progress(p, i, total))
-
-        self.master.after(0, lambda: [self.sync_mods(), self.finish_progress("Finished Downloading")])
-
-    def download_selected(self):
-        threading.Thread(target=self.threaded_download_selected, daemon=True).start()
+    def enable_all_buttons(self):
+        for widget in self.btn_frame.winfo_children():
+            if isinstance(widget, ctk.CTkButton):
+                widget.configure(state="normal")
 
 # === LOGIN WINDOW ===
 class LoginWindow:
     def __init__(self, master):
         self.master = master
         self.master.title("Mine Server Sync - Login")
-        self.master.geometry("400x350")  # Increased height for additional fields
+        self.master.geometry("400x375")  # Increased height for additional fields
         
         # Center the window
         window_width = self.master.winfo_reqwidth()
@@ -420,6 +539,7 @@ class LoginWindow:
         self.master.geometry(f"+{position_right}+{position_down}")
         
         self.setup_login_ui()
+        self.load_remembered()
         
     def setup_login_ui(self):
         frame = ctk.CTkFrame(self.master)
@@ -431,12 +551,14 @@ class LoginWindow:
         # Host entry
         self.host_entry = ctk.CTkEntry(frame, placeholder_text="SFTP Host")
         self.host_entry.pack(pady=6, padx=10)
-        self.host_entry.insert(0, 'sg03.wisehosting.com')  # Default value
+        if not os.path.exists(REMEMBER_FILE):
+            self.host_entry.insert(0, 'sg03.wisehosting.com')  # Default value
         
         # Port entry
         self.port_entry = ctk.CTkEntry(frame, placeholder_text="SFTP Port")
         self.port_entry.pack(pady=6, padx=10)
-        self.port_entry.insert(0, "2022")  # Default value
+        if not os.path.exists(REMEMBER_FILE):
+            self.port_entry.insert(0, "2022")  # Default value
         
         # Username entry
         self.user_entry = ctk.CTkEntry(frame, placeholder_text="Username")
@@ -446,6 +568,11 @@ class LoginWindow:
         self.pass_entry = ctk.CTkEntry(frame, placeholder_text="Password", show="*")
         self.pass_entry.pack(pady=6, padx=10)
         
+        # Remember Me
+        self.remember_var = ctk.BooleanVar()
+        self.remember_checkbox = ctk.CTkCheckBox(frame, text="Remember Me", variable=self.remember_var)
+        self.remember_checkbox.pack(pady=6)
+
         # Login button
         login_btn = ctk.CTkButton(frame, text="Connect", command=self.on_login)
         login_btn.pack(pady=12, padx=10)
@@ -514,6 +641,18 @@ class LoginWindow:
         
         # Test connection in a separate thread to keep UI responsive
         threading.Thread(target=self.test_connection, daemon=True).start()
+
+    def load_remembered(self):
+        if os.path.exists(REMEMBER_FILE):
+            with open(REMEMBER_FILE, "r") as f:
+                data = json.load(f)
+                self.host_entry.insert(0, data.get("host", ""))
+                self.port_entry.insert(0, str(data.get("port", "")))
+                self.user_entry.insert(0, data.get("user", ""))
+                decoded_pass = base64.b64decode(data.get("pass", "")).decode()
+                self.pass_entry.insert(0, decoded_pass)
+                self.remember_var.set(True)
+
         
     def test_connection(self):
         try:
@@ -521,6 +660,7 @@ class LoginWindow:
                 # Connection successful
                 self.master.after(0, self.on_connection_success)
         except Exception as e:
+            debug(f"[ERROR] test_connection: {traceback.format_exc()}")
             self.master.after(0, self.on_connection_failed, str(e))
             
     def on_connection_success(self):
@@ -529,6 +669,19 @@ class LoginWindow:
         for widget in self.master.winfo_children():
             if isinstance(widget, ctk.CTkButton) and widget.cget("text") == "Connect":
                 widget.configure(state="normal")
+
+        if self.remember_var.get():
+            data = {
+                "host": SFTP_HOST,
+                "port": SFTP_PORT,
+                "user": SFTP_USERNAME,
+                "pass": base64.b64encode(SFTP_PASSWORD.encode()).decode()
+            }
+            with open(REMEMBER_FILE, "w") as f:
+                json.dump(data, f)
+        else:
+            if os.path.exists(REMEMBER_FILE):
+                os.remove(REMEMBER_FILE)
         
         # Proceed to main app
         self.master.destroy()
@@ -544,11 +697,34 @@ class LoginWindow:
                 widget.configure(state="normal")
         
         self.error_label.configure(text=f"Connection failed: {error}")
+
+def try_auto_login():
+    if os.path.exists(REMEMBER_FILE):
+        try:
+            with open(REMEMBER_FILE, "r") as f:
+                data = json.load(f)
+            global SFTP_HOST, SFTP_PORT, SFTP_USERNAME, SFTP_PASSWORD
+            SFTP_HOST = data.get("host")
+            SFTP_PORT = int(data.get("port"))
+            SFTP_USERNAME = data.get("user")
+            SFTP_PASSWORD = base64.b64decode(data.get("pass")).decode()
+            
+            with get_sftp() as sftp:  # Test connection
+                return True
+        except Exception as e:
+            print(f"[AutoLogin Error] {e}")
+    return False
+
 # === MAIN ===
 if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("dark-blue")
     
-    login_root = ctk.CTk()
-    login_app = LoginWindow(login_root)
-    login_root.mainloop()
+    if try_auto_login():
+        root = ctk.CTk()
+        app = MinecraftSyncApp(root)
+        root.mainloop()
+    else:
+        login_root = ctk.CTk()
+        login_app = LoginWindow(login_root)
+        login_root.mainloop()

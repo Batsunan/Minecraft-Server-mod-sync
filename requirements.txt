@@ -1,0 +1,4 @@
+customtkinter
+paramiko
+pillow
+pyinstaller>=4.3
